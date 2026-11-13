@@ -63,9 +63,21 @@ fi
 
 UNSIGNED_COUNT=0
 
+# git reports an SSH signature as "N" (no signature) unless gpg.ssh.allowedSignersFile is configured,
+# which it is not on a CI runner. The signature itself is in the header of the commit object, whatever
+# the key type, so an "N" is looked up there before the commit counts as unsigned.
+has_signature() {
+    git cat-file commit "$1" | sed '/^$/q' | grep -qE '^gpgsig(-sha256)? '
+}
+
 while IFS=$'\x1f' read -r HASH SIG_STATUS AUTHOR SUBJECT; do
     [ -z "$HASH" ] && continue
     SHORT_HASH="${HASH:0:7}"
+
+    if [ "$SIG_STATUS" = "N" ] && has_signature "$HASH"; then
+        # Signed, but not verifiable here: what git calls "E" for a GPG signature without its key.
+        SIG_STATUS="E"
+    fi
 
     case "$SIG_STATUS" in
         N)

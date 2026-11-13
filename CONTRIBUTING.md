@@ -357,9 +357,9 @@ If merging the PR resolved a JIRA issue, mark that issue as resolved and set "Fi
 
 ### Signing Your Commits
 
-All commits must be signed with GPG keys.
+All commits must be signed, with a GPG key or an SSH key.
 
-For GPG setup instructions, see the [Fineract GPG Guide](https://fineract.apache.org/docs/develop/#_signing_releases).
+For GPG setup instructions, see the [Fineract GPG Guide](https://fineract.apache.org/docs/develop/#_signing_releases). For signing with an SSH key, see [GitHub's guide](https://docs.github.com/en/authentication/managing-commit-signature-verification/telling-git-about-your-signing-key#telling-git-about-your-ssh-key); add the key to your GitHub account as a signing key as well.
 
 Commit signatures may be checked locally with `git log --show-signature`, and a "Verified" badge should appear on GitHub for [every commit](https://github.com/apache/fineract/commits/).
 
