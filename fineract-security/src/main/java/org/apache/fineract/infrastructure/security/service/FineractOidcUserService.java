@@ -18,14 +18,20 @@
  */
 package org.apache.fineract.infrastructure.security.service;
 
+import com.google.common.base.Splitter;
 import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.fineract.infrastructure.core.config.FineractProperties;
 import org.apache.fineract.infrastructure.security.data.FineractOidcUser;
 import org.apache.fineract.useradministration.domain.AppUser;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.oauth2.core.ClaimAccessor;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.OidcUserInfo;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
@@ -55,7 +61,7 @@ public class FineractOidcUserService {
 
         log.debug("Resolving Fineract user for OIDC subject '{}' (username claim: '{}')", jwt.getSubject(), username);
 
-        return resolutionService.resolveOrCreate(username, email, firstName, lastName, Set.of());
+        return resolveOrCreate(username, email, firstName, lastName, extractRoles(jwt));
     }
 
     /**
@@ -76,7 +82,7 @@ public class FineractOidcUserService {
 
         log.debug("Processing OIDC user '{}' for tenant '{}'", username, tenantId);
 
-        AppUser appUser = resolutionService.resolveOrCreate(username, email, firstName, lastName, Set.of());
+        AppUser appUser = resolveOrCreate(username, email, firstName, lastName, extractRoles(oidcUser));
 
         Collection<? extends GrantedAuthority> authorities = appUser.getAuthorities();
         OidcIdToken idToken = oidcUser.getIdToken();
@@ -86,12 +92,53 @@ public class FineractOidcUserService {
     }
 
     /**
+     * Parallel requests of one user may all find that the user is to be created, or its roles to be changed. One of
+     * them writes; the others fail on the same rows and find, on a second try, what the first one wrote.
+     */
+    private AppUser resolveOrCreate(String username, String email, String firstName, String lastName, Set<String> roles) {
+        try {
+            return resolutionService.resolveOrCreate(username, email, firstName, lastName, roles);
+        } catch (JpaSystemException | DataIntegrityViolationException e) {
+            log.debug("Resolving OIDC user '{}' again after a concurrent write", username, e);
+            return resolutionService.resolveOrCreate(username, email, firstName, lastName, roles);
+        }
+    }
+
+    /**
      * Extracts the username from a JWT using the configured claim, falling back to {@code sub}.
      */
     public String extractUsername(Jwt jwt) {
         String claimName = fineractProperties.getSecurity().getOidcFederation().getUsernameClaim();
         String username = jwt.getClaimAsString(claimName);
         return username != null ? username : jwt.getSubject();
+    }
+
+    /**
+     * Extracts the role names from the configured roles claim: a list, or a comma-separated string. A dotted claim name
+     * reaches into nested claims when no claim has that literal name, e.g. {@code realm_access.roles}. Returns an empty
+     * set when no roles claim is configured or the token does not have it.
+     */
+    public Set<String> extractRoles(ClaimAccessor token) {
+        String claimName = fineractProperties.getSecurity().getOidcFederation().getRolesClaim();
+        if (claimName == null || claimName.isBlank()) {
+            return Set.of();
+        }
+        Object value = token.getClaim(claimName);
+        if (value == null && claimName.contains(".")) {
+            value = token.getClaims();
+            for (String part : Splitter.on('.').split(claimName)) {
+                value = value instanceof Map<?, ?> map ? map.get(part) : null;
+            }
+        }
+        Collection<?> names = value instanceof Collection<?> collection ? collection
+                : value instanceof String string ? Splitter.on(',').splitToList(string) : Set.of();
+        Set<String> roles = new LinkedHashSet<>();
+        for (Object name : names) {
+            if (name != null && !name.toString().isBlank()) {
+                roles.add(name.toString().trim());
+            }
+        }
+        return roles;
     }
 
     /**

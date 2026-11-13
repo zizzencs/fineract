@@ -107,6 +107,10 @@ All global properties are under `fineract.security.oidc-federation.*`.
 | _(empty)_
 | Comma-separated Fineract role names assigned to auto-created users (e.g. `Read-Only Role,Branch Manager`).
 
+| `roles-claim`
+| _(empty)_
+| JWT claim that names the user's Fineract roles. When set, the user's roles follow the token: at every browser login, and on every request with a Bearer token. See <<_roles_from_the_token>>.
+
 | `provider`
 | `generic`
 | Controls the RP-Initiated Logout URL format. Values: `keycloak`, `azure_ad`, `okta`, `auth0`, `google`, `generic`.
@@ -600,6 +604,24 @@ On every authenticated request, `FineractOidcJwtAuthenticationConverter` maps th
 
 The resolved `AppUser` is set as the principal in a `FineractJwtAuthenticationToken`, ensuring full compatibility with all existing Fineract services without any code changes.
 
+=== Roles from the Token
+
+By default the token only identifies the user: roles are assigned in Fineract, and `default-roles` applies once, when a user is auto-created.
+
+With `roles-claim` set, the IdP decides the roles. Whenever a token is resolved to a user, the user's roles are replaced by the Fineract roles named in that claim, together with the `default-roles`. That is at every login in the browser flow, and on every request that carries a Bearer token. This applies to auto-created users and to users that already exist.
+
+A token that names the roles the user already holds costs no extra query. Names the user does not hold are looked up with one query per request.
+
+* The claim is a JSON array of role names, or a string of comma-separated names.
+* A dotted claim name reaches into nested claims when the token has no claim of that literal name, for example `realm_access.roles` for Keycloak.
+* Names are matched to Fineract roles by name, ignoring case. A name that is not a Fineract role is skipped; create the roles in Fineract first and give them their permissions there.
+* A token without the claim leaves the user with the `default-roles` only, which may be none.
+
+[source,properties]
+----
+fineract.security.oidc-federation.roles-claim=roles
+----
+
 == Running Alongside Basic Auth
 
 Both authentication modes can be active simultaneously. The OIDC filter chain runs at `@Order(100)` and targets `/api/**`. The Basic Auth chain has no explicit order (lowest priority). Requests to `/api/**` with a `Bearer` token are handled by the OIDC chain; requests with an `Authorization: Basic` header fall through to the Basic Auth chain.
@@ -646,6 +668,7 @@ FINERACT_SECURITY_OIDC_TENANT_CLAIM=fineract_tenant
 FINERACT_SECURITY_OIDC_USERNAME_CLAIM=preferred_username
 FINERACT_SECURITY_OIDC_AUTO_CREATE_USER=false
 FINERACT_SECURITY_OIDC_DEFAULT_ROLES=Read-Only Role
+FINERACT_SECURITY_OIDC_ROLES_CLAIM=roles
 FINERACT_SECURITY_OIDC_PROVIDER=keycloak
 FINERACT_SECURITY_OIDC_POST_LOGOUT_URI=https://app.example.com/login?logout
 ----

@@ -598,6 +598,11 @@ public class FineractProperties {
             private boolean autoCreateUser = false;
             // Comma-separated role names assigned to auto-created users.
             private String defaultRoles = "";
+            // Claim holding the names of the user's Fineract roles: a list, or a comma-separated string; a dotted
+            // name reaches into nested claims (realm_access.roles). When set, the user's roles follow the token
+            // whenever it is resolved to a user: at every browser login, and on every request with a Bearer token.
+            // Empty: roles are managed in Fineract only.
+            private String rolesClaim = "";
             // Controls the RP-Initiated Logout URL format.
             // Values: keycloak | azure_ad | okta | auth0 | generic (default)
             private OidcFederationType provider = OidcFederationType.GENERIC;

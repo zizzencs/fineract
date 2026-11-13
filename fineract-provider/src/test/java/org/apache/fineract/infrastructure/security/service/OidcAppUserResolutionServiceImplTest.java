@@ -25,6 +25,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.apache.fineract.infrastructure.core.config.FineractProperties;
@@ -35,6 +37,7 @@ import org.apache.fineract.organisation.office.domain.Office;
 import org.apache.fineract.organisation.office.domain.OfficeRepository;
 import org.apache.fineract.useradministration.domain.AppUser;
 import org.apache.fineract.useradministration.domain.AppUserRepository;
+import org.apache.fineract.useradministration.domain.Role;
 import org.apache.fineract.useradministration.domain.RoleRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -165,5 +168,88 @@ class OidcAppUserResolutionServiceImplTest {
                 .isInstanceOf(OidcUserNotFoundException.class);
 
         verify(appUserRepository, never()).findActiveUserByEmail(any());
+    }
+
+    @Test
+    void leavesRolesOfExistingUserAloneWithoutRolesClaim() {
+        when(appUserRepository.findAppUserByName("alice")).thenReturn(existingUser);
+        when(oidcProps.getRolesClaim()).thenReturn("");
+
+        AppUser result = service.resolveOrCreate("alice", null, null, null, Set.of("Teller"));
+
+        assertThat(result).isSameAs(existingUser);
+        verify(existingUser, never()).getRoles();
+        verify(appUserRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void replacesRolesOfExistingUserWithThoseOfTheToken() {
+        Role teller = role("Teller");
+        Role auditor = role("Auditor");
+        Role readOnly = role("Read-Only Role");
+        Set<Role> current = new HashSet<>(Set.of(teller));
+        when(appUserRepository.findAppUserByName("alice")).thenReturn(existingUser);
+        when(existingUser.getRoles()).thenReturn(current);
+        when(oidcProps.getRolesClaim()).thenReturn("roles");
+        when(oidcProps.getDefaultRoles()).thenReturn("Read-Only Role");
+        when(roleRepository.findByLowerCaseNames(Set.of("auditor", "read-only role", "no such role")))
+                .thenReturn(List.of(auditor, readOnly));
+        when(appUserRepository.saveAndFlush(existingUser)).thenReturn(existingUser);
+
+        service.resolveOrCreate("alice", null, null, null, Set.of("Auditor", "No Such Role"));
+
+        assertThat(current).containsExactlyInAnyOrder(auditor, readOnly);
+        verify(appUserRepository).saveAndFlush(existingUser);
+    }
+
+    @Test
+    void removesAllRolesWhenTheTokenNamesNone() {
+        Set<Role> current = new HashSet<>(Set.of(role("Teller")));
+        when(appUserRepository.findAppUserByName("alice")).thenReturn(existingUser);
+        when(existingUser.getRoles()).thenReturn(current);
+        when(oidcProps.getRolesClaim()).thenReturn("roles");
+        when(oidcProps.getDefaultRoles()).thenReturn("");
+        when(appUserRepository.saveAndFlush(existingUser)).thenReturn(existingUser);
+
+        service.resolveOrCreate("alice", null, null, null, Set.of());
+
+        assertThat(current).isEmpty();
+        verify(roleRepository, never()).findByLowerCaseNames(any());
+        verify(appUserRepository).saveAndFlush(existingUser);
+    }
+
+    @Test
+    void neitherQueriesNorSavesWhenTheTokenNamesTheRolesTheUserHas() {
+        Set<Role> current = new HashSet<>(Set.of(role("Teller")));
+        when(appUserRepository.findAppUserByName("alice")).thenReturn(existingUser);
+        when(existingUser.getRoles()).thenReturn(current);
+        when(oidcProps.getRolesClaim()).thenReturn("roles");
+        when(oidcProps.getDefaultRoles()).thenReturn("");
+
+        service.resolveOrCreate("alice", null, null, null, Set.of("teller"));
+
+        verify(roleRepository, never()).findByLowerCaseNames(any());
+        verify(appUserRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void doesNotSaveWhenTheOtherNamesOfTheTokenAreNoRoles() {
+        Set<Role> current = new HashSet<>(Set.of(role("Teller")));
+        when(appUserRepository.findAppUserByName("alice")).thenReturn(existingUser);
+        when(existingUser.getRoles()).thenReturn(current);
+        when(oidcProps.getRolesClaim()).thenReturn("roles");
+        when(oidcProps.getDefaultRoles()).thenReturn("");
+        when(roleRepository.findByLowerCaseNames(Set.of("role of another system"))).thenReturn(List.of());
+
+        service.resolveOrCreate("alice", null, null, null, Set.of("Teller", "Role Of Another System"));
+
+        verify(roleRepository).findByLowerCaseNames(Set.of("role of another system"));
+        verify(appUserRepository, never()).saveAndFlush(any());
+    }
+
+    private static Role role(String name) {
+        Role role = org.mockito.Mockito.mock(Role.class);
+        when(role.getName()).thenReturn(name);
+        return role;
     }
 }
